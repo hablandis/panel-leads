@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d1b2a">
+  <title>Panel de Leads — Hablandis</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+
+  <!-- ── Pantalla de login ──────────────────────────────────────────────── -->
+  <div id="login-view">
+    <div class="login-card">
+      <div class="login-logo" aria-hidden="true">H</div>
+      <h1>Panel de Leads</h1>
+      <p class="login-subtitle">Hablandis · Acceso del equipo</p>
+
+      <form id="login-form" novalidate style="width:100%;display:flex;flex-direction:column;gap:.75rem;">
+        <div class="field-group">
+          <label for="login-email" class="field-label">Email</label>
+          <input type="email" id="login-email" name="email"
+                 autocomplete="email" placeholder="tu@hablandis.com" required>
+        </div>
+        <div class="field-group">
+          <label for="login-password" class="field-label">Contraseña</label>
+          <input type="password" id="login-password" name="password"
+                 autocomplete="current-password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn-login">Entrar</button>
+      </form>
+      <p id="login-error" class="login-error" hidden></p>
+    </div>
+  </div>
+
+  <!-- ── App ───────────────────────────────────────────────────────────── -->
+  <div id="app-view" hidden>
+
+    <header class="app-header">
+      <div class="header-brand">
+        <span class="header-logo" aria-hidden="true">H</span>
+        <span class="header-title">Panel de Leads</span>
+      </div>
+      <div class="header-controls">
+        <span id="sync-indicator" class="sync-indicator" hidden></span>
+        <button id="btn-eventos" class="btn-header" type="button">Eventos</button>
+        <button id="btn-modo"    class="btn-modo"   type="button">Modo evento</button>
+      </div>
+      <div class="header-user">
+        <span id="user-email" class="user-email"></span>
+        <button id="btn-signout" class="btn-signout" type="button">Cerrar sesión</button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <div class="leads-header">
+        <h2>Leads</h2>
+        <span id="leads-count" class="leads-count"></span>
+      </div>
+
+      <!-- Barra de modo evento -->
+      <div id="evento-bar" class="evento-bar" hidden>
+        <select id="evento-select" class="evento-select">
+          <option value="">— Seleccionar evento activo —</option>
+        </select>
+        <button id="btn-nuevo-lead" type="button" class="btn-nuevo-lead">+ Nuevo lead</button>
+      </div>
+
+      <p id="leads-status" class="leads-status"></p>
+
+      <div class="table-wrapper">
+        <table id="leads-table" hidden>
+          <thead>
+            <tr>
+              <th>Taller</th>
+              <th>Nombre</th>
+              <th>Apellidos</th>
+              <th>Email</th>
+              <th>Evento</th>
+              <th>Fecha envío</th>
+              <th>Cualificación</th>
+              <th>Propietario</th>
+            </tr>
+          </thead>
+          <tbody id="leads-tbody"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- ── Overlay de paneles laterales ──────────────────────────────── -->
+    <div id="panel-overlay" hidden></div>
+
+    <!-- ── Panel de detalle completo (modo repaso) ────────────────────── -->
+    <aside id="lead-panel" inert aria-label="Ficha del lead">
+      <div class="panel-header">
+        <div>
+          <p class="panel-supertitle" id="panel-supertitle"></p>
+          <h3 id="panel-title"></h3>
+        </div>
+        <button id="panel-close" class="panel-close-btn" aria-label="Cerrar ficha">✕</button>
+      </div>
+      <div class="panel-body">
+        <section class="panel-section">
+          <h4 class="panel-section-title">Datos del formulario</h4>
+          <dl class="panel-dl" id="panel-readonly"></dl>
+        </section>
+        <div id="panel-cooling" class="panel-cooling" hidden>
+          <span class="cooling-text">Sin actividad en más de 30 días</span>
+          <button id="btn-enfriar" type="button" class="btn-enfriar">Enfriar lead</button>
+        </div>
+        <section class="panel-section">
+          <h4 class="panel-section-title">Gestión del equipo</h4>
+          <form id="panel-form" novalidate>
+            <div class="form-grid">
+              <div class="field-group">
+                <label class="field-label" for="f-cualificacion">Cualificación</label>
+                <select id="f-cualificacion" name="cualificacion">
+                  <option value="">— sin definir —</option>
+                  <option value="frio">Frío</option>
+                  <option value="templado">Templado</option>
+                  <option value="caliente">Caliente</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-propietario">Propietario</label>
+                <select id="f-propietario" name="propietario">
+                  <option value="">— sin asignar —</option>
+                  <option value="Mila">Mila</option>
+                  <option value="Miriam">Miriam</option>
+                  <option value="Peter">Peter</option>
+                  <option value="Román">Román</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-pais">País</label>
+                <input type="text" id="f-pais" name="pais" placeholder="España">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-institucion">Institución</label>
+                <input type="text" id="f-institucion" name="institucion"
+                       placeholder="IES Nombre del centro">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-nivel">Nivel de enseñanza</label>
+                <select id="f-nivel" name="nivelEnsenanza">
+                  <option value="">— sin definir —</option>
+                  <option value="primaria">Primaria</option>
+                  <option value="secundaria">Secundaria</option>
+                  <option value="universidad">Universidad</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-proximo-paso">Próximo paso</label>
+                <input type="text" id="f-proximo-paso" name="proximoPaso"
+                       placeholder="Ej: llamar para presupuesto">
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="f-fecha-proximo">Fecha próximo paso</label>
+                <input type="date" id="f-fecha-proximo" name="fechaProximoPaso">
+              </div>
+            </div>
+            <div class="field-group panel-textarea-group">
+              <label class="field-label" for="f-notas">Notas generales</label>
+              <textarea id="f-notas" name="notas" rows="4"
+                        placeholder="Contexto de la relación, observaciones…"></textarea>
+            </div>
+            <div class="field-group panel-textarea-group">
+              <label class="field-label" for="f-nota-evento">Nota de este evento</label>
+              <textarea id="f-nota-evento" name="notaDelEvento" rows="3"
+                        placeholder="Qué dijo en este encuentro, contexto del taller…"></textarea>
+            </div>
+          </form>
+        </section>
+        <section class="panel-section" id="panel-historial-section" hidden>
+          <h4 class="panel-section-title">Historial</h4>
+          <ul class="panel-historial" id="panel-historial"></ul>
+        </section>
+      </div>
+      <div class="panel-footer">
+        <button id="panel-save"   class="btn-panel-save"   type="button">Guardar</button>
+        <button id="panel-cancel" class="btn-panel-cancel" type="button">Cancelar</button>
+        <span   id="panel-status" class="panel-status"></span>
+      </div>
+    </aside>
+
+    <!-- ── Quick panel (modo evento) ─────────────────────────────────── -->
+    <aside id="quick-panel" inert aria-label="Ficha rápida">
+      <div class="panel-header">
+        <div>
+          <p class="panel-supertitle" id="qp-supertitle"></p>
+          <h3 id="qp-title"></h3>
+        </div>
+        <button id="qp-close" class="panel-close-btn" aria-label="Cerrar ficha">✕</button>
+      </div>
+      <div class="qp-body">
+        <div class="qp-info">
+          <p id="qp-email" class="qp-email-text"></p>
+        </div>
+        <div class="qp-section">
+          <p class="panel-section-title">Cualificación</p>
+          <div class="qual-buttons" id="qp-qual-buttons">
+            <button class="qual-btn frio"     data-val="frio"     type="button">❄ Frío</button>
+            <button class="qual-btn templado" data-val="templado" type="button">〜 Templado</button>
+            <button class="qual-btn caliente" data-val="caliente" type="button">🔥 Caliente</button>
+          </div>
+        </div>
+        <div class="qp-notas-section">
+          <p class="panel-section-title">Nota del evento</p>
+          <textarea id="qp-nota"
+                    placeholder="Dicta o escribe… Qué enseña, cuántos alumnos, nivel, interés…"></textarea>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <button id="qp-save"   class="btn-panel-save"   type="button">Guardar</button>
+        <button id="qp-cancel" class="btn-panel-cancel" type="button">Cancelar</button>
+        <span   id="qp-status" class="panel-status"></span>
+      </div>
+    </aside>
+
+    <!-- ── Overlay de modales ─────────────────────────────────────────── -->
+    <div id="modal-overlay" hidden></div>
+
+    <!-- ── Modal: gestor de eventos ──────────────────────────────────── -->
+    <div id="event-manager" class="modal" inert role="dialog" aria-label="Gestión de eventos">
+      <div class="modal-header">
+        <h3>Eventos</h3>
+        <button id="em-close" class="panel-close-btn" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-body">
+        <ul id="em-list" class="em-list"></ul>
+        <hr class="modal-divider">
+        <h4 class="panel-section-title" style="margin-bottom:.75rem">Nuevo evento</h4>
+        <form id="em-form" novalidate>
+          <div class="form-grid">
+            <div class="field-group">
+              <label class="field-label" for="em-nombre">Nombre *</label>
+              <input type="text" id="em-nombre" name="nombre" placeholder="IC Milán 2026" required>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="em-fecha">Fecha</label>
+              <input type="date" id="em-fecha" name="fecha">
+            </div>
+            <div class="field-group" style="grid-column:1/-1">
+              <label class="field-label" for="em-ciudad">Ciudad</label>
+              <input type="text" id="em-ciudad" name="ciudad" placeholder="Milán">
+            </div>
+          </div>
+          <div style="margin-top:.875rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+            <button type="submit" class="btn-panel-save">Añadir evento</button>
+            <span id="em-status" class="panel-status" style="text-align:left"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ── Modal: nuevo lead ──────────────────────────────────────────── -->
+    <div id="new-lead-modal" class="modal" inert role="dialog" aria-label="Nuevo lead">
+      <div class="modal-header">
+        <h3>Nuevo lead</h3>
+        <button id="nl-close" class="panel-close-btn" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="nl-evento-label" class="nl-evento-label"></p>
+        <form id="nl-form" novalidate>
+          <div class="form-grid">
+            <div class="field-group">
+              <label class="field-label" for="nl-nombre">Nombre *</label>
+              <input type="text" id="nl-nombre" name="nombre" required placeholder="María">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="nl-apellidos">Apellidos</label>
+              <input type="text" id="nl-apellidos" name="apellidos" placeholder="García López">
+            </div>
+            <div class="field-group" style="grid-column:1/-1">
+              <label class="field-label" for="nl-email">Email *</label>
+              <input type="email" id="nl-email" name="email" required placeholder="profe@colegio.es">
+            </div>
+          </div>
+          <div class="field-group" style="margin-top:.75rem">
+            <label class="field-label" for="nl-nota">Nota inicial</label>
+            <textarea id="nl-nota" name="nota" rows="3"
+                      placeholder="Primera impresión, qué enseña, interés en viajes…"></textarea>
+          </div>
+          <p id="nl-error" class="login-error" hidden style="margin-top:.625rem"></p>
+          <div style="margin-top:.875rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+            <button type="submit" class="btn-panel-save">Guardar lead</button>
+            <span id="nl-status" class="panel-status" style="text-align:left"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div><!-- /app-view -->
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Generar iconos — Panel Leads</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem; background: #f4f5f7; }
+    h1 { color: #0d1b2a; margin-bottom: .5rem; }
+    p  { color: #444950; margin-bottom: 1.5rem; }
+    .previews { display: flex; gap: 2rem; align-items: flex-end; margin-bottom: 2rem; flex-wrap: wrap; }
+    canvas { border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.2); display: block; }
+    a.dl {
+      display: inline-block;
+      margin-top: .5rem;
+      padding: .5rem 1rem;
+      background: #0d1b2a;
+      color: #f5c800;
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: .9rem;
+    }
+    a.dl:hover { background: #2a4460; }
+    .item { text-align: center; }
+    .size-label { font-size: .8rem; color: #9aa0a6; margin-top: .25rem; }
+  </style>
+</head>
+<body>
+  <h1>Generador de iconos — Hablandis Panel</h1>
+  <p>Haz clic en los botones para descargar los iconos. Guárdalos en la carpeta <code>icons/</code> del proyecto.</p>
+  <div class="previews" id="previews"></div>
+  <p style="font-size:.875rem;color:#9aa0a6">
+    Una vez descargados ambos iconos en la carpeta <code>icons/</code>, ya puedes cerrar esta página.
+  </p>
+
+  <script>
+    function drawIcon(size) {
+      const canvas = document.createElement('canvas');
+      canvas.width  = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+
+      // Fondo navy con esquinas redondeadas
+      const r = size * 0.15625; // 80/512 * size
+      ctx.fillStyle = '#0d1b2a';
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.arcTo(size, 0, size, size, r);
+      ctx.arcTo(size, size, 0, size, r);
+      ctx.arcTo(0, size, 0, 0, r);
+      ctx.arcTo(0, 0, size, 0, r);
+      ctx.closePath();
+      ctx.fill();
+
+      // H amarilla
+      ctx.fillStyle = '#f5c800';
+      ctx.font = `900 ${size * 0.62}px 'Courier New', monospace`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('H', size / 2, size * 0.525);
+
+      return canvas;
+    }
+
+    const sizes = [192, 512];
+    const container = document.getElementById('previews');
+
+    sizes.forEach(size => {
+      const canvas = drawIcon(size);
+      const displaySize = size === 512 ? 128 : 96;
+      canvas.style.width  = displaySize + 'px';
+      canvas.style.height = displaySize + 'px';
+
+      const link = document.createElement('a');
+      link.className = 'dl';
+      link.download  = `icon-${size}.png`;
+      link.href      = canvas.toDataURL('image/png');
+      link.textContent = `Descargar icon-${size}.png`;
+
+      const label = document.createElement('p');
+      label.className   = 'size-label';
+      label.textContent = `${size}×${size}px`;
+
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.appendChild(canvas);
+      div.appendChild(link);
+      div.appendChild(label);
+      container.appendChild(div);
+    });
+  </script>
+</body>
+</html>
