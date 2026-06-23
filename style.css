@@ -538,6 +538,99 @@ td a:hover { text-decoration: underline; color: var(--navy-light); }
 .panel-status.ok  { color: #15803d; }
 .panel-status.err { color: var(--error); }
 
+/* ── Fase 4: stats + filtros + export ───────────────────────────────────── */
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .75rem;
+  margin-bottom: 1rem;
+}
+@media (max-width: 560px) { .stats-bar { grid-template-columns: repeat(2, 1fr); } }
+
+.stat-card {
+  background: var(--white);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: .875rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .125rem;
+  border: 2px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+.stat-card:hover    { border-color: var(--gray-200); box-shadow: 0 4px 12px rgba(0,0,0,.12); }
+.stat-card.active   { border-color: var(--navy); }
+
+.stat-num {
+  font-family: var(--font-mono);
+  font-size: 1.625rem;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1;
+}
+.stat-label {
+  font-size: .6875rem;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-top: .25rem;
+}
+.stat-card.is-caliente .stat-num { color: #991b1b; }
+.stat-card.is-warning  .stat-num { color: #92400e; }
+.stat-card.is-hoy      .stat-num { color: #166534; }
+
+.filters-bar {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.filter-select {
+  padding: .375rem .625rem;
+  border: 1.5px solid var(--gray-200);
+  border-radius: var(--radius);
+  font-size: .8125rem;
+  color: var(--navy);
+  background: var(--white);
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.filter-select:focus  { outline: none; border-color: var(--navy); }
+.filter-select.active { border-color: var(--navy); font-weight: 600; }
+
+.btn-clear-filters {
+  background: none;
+  border: 1px solid var(--gray-200);
+  color: var(--gray-400);
+  font-size: .75rem;
+  padding: .375rem .625rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.btn-clear-filters:hover { color: var(--navy); border-color: var(--gray-400); }
+
+.btn-export {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--gray-200);
+  color: var(--gray-700);
+  font-size: .8125rem;
+  padding: .375rem .875rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.btn-export:hover { background: var(--gray-100); border-color: var(--gray-400); }
+.btn-export:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
 /* ── Fase 3: controles del header ────────────────────────────────────────── */
 .header-controls {
   display: flex;

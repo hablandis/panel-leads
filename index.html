@@ -60,6 +60,48 @@
         <span id="leads-count" class="leads-count"></span>
       </div>
 
+      <!-- Stats -->
+      <div id="stats-bar" class="stats-bar" hidden>
+        <button class="stat-card" id="stat-total" type="button">
+          <span class="stat-num" id="stat-num-total">0</span>
+          <span class="stat-label">leads</span>
+        </button>
+        <button class="stat-card is-caliente" id="stat-calientes" type="button">
+          <span class="stat-num" id="stat-num-calientes">0</span>
+          <span class="stat-label">calientes</span>
+        </button>
+        <button class="stat-card is-warning" id="stat-sin-prop" type="button">
+          <span class="stat-num" id="stat-num-sin-prop">0</span>
+          <span class="stat-label">sin propietario</span>
+        </button>
+        <button class="stat-card is-hoy" id="stat-hoy" type="button">
+          <span class="stat-num" id="stat-num-hoy">0</span>
+          <span class="stat-label">próximos hoy</span>
+        </button>
+      </div>
+
+      <!-- Filtros -->
+      <div id="filters-bar" class="filters-bar" hidden>
+        <select id="filter-cual" class="filter-select">
+          <option value="">Todas las cualificaciones</option>
+          <option value="frio">Frío</option>
+          <option value="templado">Templado</option>
+          <option value="caliente">Caliente</option>
+          <option value="enfriandose">Enfriándose</option>
+          <option value="sin-definir">Sin definir</option>
+        </select>
+        <select id="filter-prop" class="filter-select">
+          <option value="">Todos los propietarios</option>
+          <option value="Mila">Mila</option>
+          <option value="Miriam">Miriam</option>
+          <option value="Peter">Peter</option>
+          <option value="Román">Román</option>
+          <option value="sin-asignar">Sin asignar</option>
+        </select>
+        <button id="btn-clear-filters" class="btn-clear-filters" type="button" hidden>✕ Limpiar</button>
+        <button id="btn-export" class="btn-export" type="button">Exportar CSV</button>
+      </div>
+
       <!-- Barra de modo evento -->
       <div id="evento-bar" class="evento-bar" hidden>
         <select id="evento-select" class="evento-select">

@@ -83,6 +83,22 @@ const nlForm        = document.getElementById('nl-form');
 const nlError       = document.getElementById('nl-error');
 const nlStatus      = document.getElementById('nl-status');
 
+// ── DOM refs — stats y filtros ────────────────────────────────────────────────
+const statsBar        = document.getElementById('stats-bar');
+const filtersBar      = document.getElementById('filters-bar');
+const statNumTotal    = document.getElementById('stat-num-total');
+const statNumCal      = document.getElementById('stat-num-calientes');
+const statNumSinProp  = document.getElementById('stat-num-sin-prop');
+const statNumHoy      = document.getElementById('stat-num-hoy');
+const statTotal       = document.getElementById('stat-total');
+const statCalientes   = document.getElementById('stat-calientes');
+const statSinProp     = document.getElementById('stat-sin-prop');
+const statHoy         = document.getElementById('stat-hoy');
+const filterCualEl    = document.getElementById('filter-cual');
+const filterPropEl    = document.getElementById('filter-prop');
+const btnClearFilters = document.getElementById('btn-clear-filters');
+const btnExport       = document.getElementById('btn-export');
+
 // ── Estado ────────────────────────────────────────────────────────────────────
 let allRows        = [];
 let contactosCache = {};
@@ -94,6 +110,9 @@ let activeEventKey = null;
 let currentQuickLead = null;
 let quickQualValue   = '';
 let pendingQueue   = [];
+let filterCual     = '';
+let filterProp     = '';
+let filterHoy      = false;
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 loginForm.addEventListener('submit', async (e) => {
@@ -202,11 +221,12 @@ async function loadAll() {
     if (allRows.length === 0) {
       leadsStatus.textContent = 'No hay leads todavía.';
       leadsStatus.hidden      = false;
+      updateStats();
     } else {
-      leadsCount.textContent = `${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`;
       leadsStatus.hidden = true;
       leadsTable.hidden  = false;
       renderTable();
+      updateStats();
     }
 
   } catch (err) {
@@ -220,16 +240,17 @@ async function loadAll() {
 function renderTable() {
   leadsTbody.innerHTML = '';
 
-  let rows = allRows;
-  if (appMode === 'evento' && activeEventKey) {
-    const nombre = (eventosCache[activeEventKey]?.nombre ?? '').toLowerCase().trim();
-    rows = allRows.filter(r => r.evento.toLowerCase().trim() === nombre);
-  }
+  const rows      = getFilteredRows();
+  const hasFilter = filterCual || filterProp || filterHoy || (appMode === 'evento' && activeEventKey);
+  leadsCount.textContent = hasFilter
+    ? `${rows.length} de ${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`
+    : `${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`;
 
-  if (rows.length === 0 && appMode === 'evento' && activeEventKey) {
-    leadsTbody.innerHTML = `<tr><td colspan="8" class="table-empty">
-      Sin leads para este evento. Usa <strong>+ Nuevo lead</strong> para añadir el primero.
-    </td></tr>`;
+  if (rows.length === 0) {
+    const msg = (appMode === 'evento' && activeEventKey)
+      ? 'Sin leads para este evento. Usa <strong>+ Nuevo lead</strong> para añadir el primero.'
+      : 'Ningún lead coincide con los filtros activos.';
+    leadsTbody.innerHTML = `<tr><td colspan="8" class="table-empty">${msg}</td></tr>`;
     return;
   }
 
@@ -585,6 +606,7 @@ async function savePanel() {
   allRows
     .filter(r => r.email.toLowerCase() === currentLead.email.toLowerCase())
     .forEach(r => refreshRowCells(r));
+  updateStats();
 
   setPanelStatus(queued ? 'Guardado localmente ↑' : 'Guardado ✓', queued ? '' : 'ok');
   panelSave.disabled = false;
@@ -682,6 +704,7 @@ async function saveQuickPanel() {
   allRows
     .filter(r => r.email.toLowerCase() === currentQuickLead.email.toLowerCase())
     .forEach(r => refreshRowCells(r));
+  updateStats();
 
   setQpStatus(queued ? 'Guardado localmente ↑' : 'Guardado ✓', queued ? '' : 'ok');
   qpSave.disabled = false;
@@ -778,6 +801,145 @@ async function syncPending() {
 }
 
 window.addEventListener('online', syncPending);
+
+// ── Fase 4: stats, filtros, export ───────────────────────────────────────────
+function getFilteredRows() {
+  let rows = allRows;
+  if (appMode === 'evento' && activeEventKey) {
+    const nombre = (eventosCache[activeEventKey]?.nombre ?? '').toLowerCase().trim();
+    rows = rows.filter(r => r.evento.toLowerCase().trim() === nombre);
+  }
+  if (filterCual) {
+    if (filterCual === 'sin-definir') {
+      rows = rows.filter(r => !(contactosCache[emailToKey(r.email)]?.cualificacion));
+    } else if (filterCual === 'enfriandose') {
+      rows = rows.filter(r => isCooling(r, contactosCache[emailToKey(r.email)] ?? {}));
+    } else {
+      rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.cualificacion ?? '') === filterCual);
+    }
+  }
+  if (filterProp) {
+    if (filterProp === 'sin-asignar') {
+      rows = rows.filter(r => !(contactosCache[emailToKey(r.email)]?.propietario));
+    } else {
+      rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.propietario ?? '') === filterProp);
+    }
+  }
+  if (filterHoy) {
+    const today = new Date().toLocaleDateString('en-CA');
+    rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.fechaProximoPaso ?? '') === today);
+  }
+  return rows;
+}
+
+function updateStats() {
+  if (allRows.length === 0) {
+    statsBar.hidden   = true;
+    filtersBar.hidden = true;
+    return;
+  }
+  statsBar.hidden   = false;
+  filtersBar.hidden = false;
+
+  const today = new Date().toLocaleDateString('en-CA');
+  let calientes = 0, sinProp = 0, hoy = 0;
+  for (const r of allRows) {
+    const c = contactosCache[emailToKey(r.email)] ?? {};
+    if (c.cualificacion === 'caliente') calientes++;
+    if (!c.propietario) sinProp++;
+    if (c.fechaProximoPaso === today) hoy++;
+  }
+  statNumTotal.textContent   = allRows.length;
+  statNumCal.textContent     = calientes;
+  statNumSinProp.textContent = sinProp;
+  statNumHoy.textContent     = hoy;
+
+  const noFilter = !filterCual && !filterProp && !filterHoy;
+  statTotal.classList.toggle('active',    noFilter);
+  statCalientes.classList.toggle('active', filterCual === 'caliente');
+  statSinProp.classList.toggle('active',   filterProp === 'sin-asignar');
+  statHoy.classList.toggle('active',       filterHoy);
+}
+
+function syncFilterControls() {
+  filterCualEl.value = filterCual;
+  filterPropEl.value = filterProp;
+  filterCualEl.classList.toggle('active', filterCual !== '');
+  filterPropEl.classList.toggle('active', filterProp !== '');
+  btnClearFilters.hidden = !filterCual && !filterProp && !filterHoy;
+}
+
+function applyFilters() {
+  syncFilterControls();
+  renderTable();
+  updateStats();
+}
+
+statTotal.addEventListener('click', () => {
+  filterCual = ''; filterProp = ''; filterHoy = false;
+  applyFilters();
+});
+statCalientes.addEventListener('click', () => {
+  filterCual = filterCual === 'caliente' ? '' : 'caliente';
+  applyFilters();
+});
+statSinProp.addEventListener('click', () => {
+  filterProp = filterProp === 'sin-asignar' ? '' : 'sin-asignar';
+  applyFilters();
+});
+statHoy.addEventListener('click', () => {
+  filterHoy = !filterHoy;
+  applyFilters();
+});
+
+filterCualEl.addEventListener('change', () => {
+  filterCual = filterCualEl.value;
+  applyFilters();
+});
+filterPropEl.addEventListener('change', () => {
+  filterProp = filterPropEl.value;
+  applyFilters();
+});
+btnClearFilters.addEventListener('click', () => {
+  filterCual = ''; filterProp = ''; filterHoy = false;
+  applyFilters();
+});
+
+btnExport.addEventListener('click', () => {
+  const sep     = ',';
+  const headers = ['Taller','Nombre','Apellidos','Email','Evento','Fecha envío',
+                   'Cualificación','Propietario','País','Institución','Nivel',
+                   'Próximo paso','Fecha próximo paso','Notas'];
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const rows     = getFilteredRows();
+
+  const lines = [headers.join(sep)];
+  for (const r of rows) {
+    const c = contactosCache[emailToKey(r.email)] ?? {};
+    const cells = [
+      r.tallerId, r.nombre, r.apellidos, r.email, r.evento,
+      r.fecha ? new Date(r.fecha).toLocaleString('es-ES') : '',
+      c.cualificacion    ?? '',
+      c.propietario      ?? '',
+      c.pais             ?? '',
+      c.institucion      ?? '',
+      c.nivelEnsenanza   ?? '',
+      c.proximoPaso      ?? '',
+      c.fechaProximoPaso ?? '',
+      c.notas            ?? '',
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`);
+    lines.push(cells.join(sep));
+  }
+
+  const bom  = '﻿';
+  const blob = new Blob([bom + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `leads-hablandis-${todayStr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function emailToKey(email) {
