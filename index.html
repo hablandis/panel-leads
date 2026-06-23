@@ -274,7 +274,7 @@
       <div class="modal-body">
         <ul id="em-list" class="em-list"></ul>
         <hr class="modal-divider">
-        <h4 class="panel-section-title" style="margin-bottom:.75rem">Nuevo evento</h4>
+        <h4 class="panel-section-title" style="margin-bottom:.75rem" id="em-form-title">Nuevo evento</h4>
         <form id="em-form" novalidate>
           <div class="form-grid">
             <div class="field-group">
@@ -282,8 +282,12 @@
               <input type="text" id="em-nombre" name="nombre" placeholder="IC Milán 2026" required>
             </div>
             <div class="field-group">
-              <label class="field-label" for="em-fecha">Fecha</label>
-              <input type="date" id="em-fecha" name="fecha">
+              <label class="field-label" for="em-fecha-inicio">Fecha inicio</label>
+              <input type="date" id="em-fecha-inicio" name="fechaInicio">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="em-fecha-fin">Fecha fin</label>
+              <input type="date" id="em-fecha-fin" name="fechaFin">
             </div>
             <div class="field-group" style="grid-column:1/-1">
               <label class="field-label" for="em-ciudad">Ciudad</label>
@@ -291,7 +295,8 @@
             </div>
           </div>
           <div style="margin-top:.875rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-            <button type="submit" class="btn-panel-save">Añadir evento</button>
+            <button type="submit" class="btn-panel-save" id="em-submit-btn">Añadir evento</button>
+            <button type="button" class="btn-panel-cancel" id="em-cancel-edit" hidden>Cancelar edición</button>
             <span id="em-status" class="panel-status" style="text-align:left"></span>
           </div>
         </form>

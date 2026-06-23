@@ -76,6 +76,9 @@ const emClose       = document.getElementById('em-close');
 const emList        = document.getElementById('em-list');
 const emForm        = document.getElementById('em-form');
 const emStatus      = document.getElementById('em-status');
+const emFormTitle   = document.getElementById('em-form-title');
+const emSubmitBtn   = document.getElementById('em-submit-btn');
+const emCancelEdit  = document.getElementById('em-cancel-edit');
 const newLeadModal  = document.getElementById('new-lead-modal');
 const nlClose       = document.getElementById('nl-close');
 const nlEventoLabel = document.getElementById('nl-evento-label');
@@ -113,6 +116,7 @@ let pendingQueue   = [];
 let filterCual     = '';
 let filterProp     = '';
 let filterHoy      = false;
+let editingEventKey = null;
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 loginForm.addEventListener('submit', async (e) => {
@@ -369,15 +373,86 @@ function renderEventoList() {
     emList.innerHTML = '<li class="em-empty">No hay eventos todavía. Añade el primero abajo.</li>';
     return;
   }
-  entries.sort((a, b) => (b[1].fecha ?? '').localeCompare(a[1].fecha ?? ''));
-  emList.innerHTML = entries.map(([, ev]) => `
-    <li>
-      <div>
-        <span class="em-evento-nombre">${esc(ev.nombre)}</span>
-        <span class="em-evento-meta">${ev.ciudad ? esc(ev.ciudad) + ' · ' : ''}${ev.fecha ? formatFechaCorta(ev.fecha) : ''}</span>
-      </div>
-    </li>
-  `).join('');
+  entries.sort((a, b) => (b[1].fechaInicio ?? b[1].fecha ?? '').localeCompare(a[1].fechaInicio ?? a[1].fecha ?? ''));
+  emList.innerHTML = entries.map(([key, ev]) => {
+    const fechaStr = ev.fechaInicio && ev.fechaFin && ev.fechaInicio !== ev.fechaFin
+      ? `${formatFechaCorta(ev.fechaInicio)} - ${formatFechaCorta(ev.fechaFin)}`
+      : ev.fechaInicio ? formatFechaCorta(ev.fechaInicio) : ev.fecha ? formatFechaCorta(ev.fecha) : '';
+    return `
+      <li data-key="${key}">
+        <div class="em-evento-content">
+          <div>
+            <span class="em-evento-nombre">${esc(ev.nombre)}</span>
+            <span class="em-evento-meta">${ev.ciudad ? esc(ev.ciudad) + ' · ' : ''}${fechaStr}</span>
+          </div>
+          <div class="em-evento-actions">
+            <button type="button" class="em-btn em-edit-btn" aria-label="Editar" data-key="${key}">✏️</button>
+            <button type="button" class="em-btn em-delete-btn" aria-label="Eliminar" data-key="${key}">🗑️</button>
+          </div>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  emList.querySelectorAll('.em-edit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.key;
+      editEvent(key);
+    });
+  });
+  emList.querySelectorAll('.em-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.key;
+      if (confirm(`¿Eliminar evento "${eventosCache[key].nombre}"?`)) {
+        deleteEvent(key);
+      }
+    });
+  });
+}
+
+function editEvent(key) {
+  editingEventKey = key;
+  const ev = eventosCache[key];
+
+  emForm['nombre'].value = ev.nombre || '';
+  emForm['fechaInicio'].value = ev.fechaInicio || ev.fecha || '';
+  emForm['fechaFin'].value = ev.fechaFin || '';
+  emForm['ciudad'].value = ev.ciudad || '';
+
+  emFormTitle.textContent = 'Editar evento';
+  emSubmitBtn.textContent = 'Guardar cambios';
+  emCancelEdit.hidden = false;
+  emStatus.textContent = '';
+
+  emForm['nombre'].focus();
+}
+
+function cancelEditEvent() {
+  editingEventKey = null;
+  emForm.reset();
+  emFormTitle.textContent = 'Nuevo evento';
+  emSubmitBtn.textContent = 'Añadir evento';
+  emCancelEdit.hidden = true;
+  emStatus.textContent = '';
+}
+
+async function deleteEvent(key) {
+  emStatus.textContent = 'Eliminando…';
+  const result = await resilientSave('set', `eventos/${key}`, null);
+
+  delete eventosCache[key];
+  if (activeEventKey === key) {
+    activeEventKey = null;
+    eventoSelect.value = '';
+  }
+  populateEventoSelect();
+  renderEventoList();
+  renderTable();
+
+  emStatus.textContent = result.queued ? 'Eliminado localmente ↑' : 'Eliminado ✓';
+  emStatus.className = result.queued ? 'panel-status' : 'panel-status ok';
 }
 
 emForm.addEventListener('submit', async (e) => {
@@ -385,27 +460,36 @@ emForm.addEventListener('submit', async (e) => {
   const nombre = emForm['nombre'].value.trim();
   if (!nombre) return;
 
-  const newKey    = push(ref(db, 'eventos')).key;
+  const wasEditing = editingEventKey !== null;
   const eventoData = {
     nombre,
-    fecha:     emForm['fecha'].value,
-    ciudad:    emForm['ciudad'].value.trim(),
-    creadoPor: auth.currentUser.email,
+    fechaInicio:  emForm['fechaInicio'].value,
+    fechaFin:     emForm['fechaFin'].value,
+    ciudad:       emForm['ciudad'].value.trim(),
+    creadoPor:    auth.currentUser.email,
   };
 
   emStatus.textContent = 'Guardando…';
   emStatus.className   = 'panel-status';
 
-  const result = await resilientSave('set', `eventos/${newKey}`, eventoData);
+  let key = editingEventKey;
+  if (!key) {
+    key = push(ref(db, 'eventos')).key;
+  }
 
-  eventosCache[newKey] = eventoData;
+  const result = await resilientSave('set', `eventos/${key}`, eventoData);
+
+  eventosCache[key] = eventoData;
   populateEventoSelect();
   renderEventoList();
-  emForm.reset();
+  renderTable();
 
-  emStatus.textContent = result.queued ? 'Guardado localmente ↑' : 'Añadido ✓';
+  cancelEditEvent();
+  emStatus.textContent = result.queued ? 'Guardado localmente ↑' : (wasEditing ? 'Actualizado ✓' : 'Añadido ✓');
   emStatus.className   = result.queued ? 'panel-status' : 'panel-status ok';
 });
+
+emCancelEdit.addEventListener('click', cancelEditEvent);
 
 emClose.addEventListener('click', closeEventManager);
 
