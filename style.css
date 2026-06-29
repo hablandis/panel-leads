@@ -1007,14 +1007,51 @@ td a:hover { text-decoration: underline; color: var(--navy-light); }
 
 .em-list li {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   padding: .5rem .625rem;
   border-radius: var(--radius);
   background: var(--gray-100);
   font-size: .875rem;
-  gap: .5rem;
+  gap: .375rem;
 }
+
+.em-evento-slug {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+.em-slug-label {
+  font-size: .7rem;
+  color: var(--gray-700);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.em-evento-slug code {
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  color: var(--navy);
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 3px;
+  padding: .125rem .375rem;
+  word-break: break-all;
+}
+.em-copy-btn {
+  background: none;
+  border: 1px solid var(--navy);
+  color: var(--navy);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  font-weight: 700;
+  padding: .1875rem .5rem;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.em-copy-btn:hover { background: var(--navy); color: var(--yellow); }
+.em-copy-btn:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 
 .em-evento-content {
   display: flex;

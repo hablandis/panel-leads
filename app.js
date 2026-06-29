@@ -173,22 +173,32 @@ const PESO_CUALIFICACION = { caliente: 0, templado: 1, '': 2 };
 
 // ── Vía: cómo entró el contacto (lista CERRADA, no texto libre). Eje aparte del
 //    evento (dónde/cuándo). 'taller' se DERIVA del tallerId de cada captura y NO
-//    se guarda; mesa/web/referido entran a mano como overlay aditivo bajo
-//    contactos/<emailKey>/vias/{via}:true. (Hoy NO se deriva 'mesa': el QR de mesa
-//    está pendiente, así que mesa también es manual de momento.) ─────────────────
+//    se guarda; mesa/web/referido/sorteo entran a mano como overlay aditivo bajo
+//    contactos/<emailKey>/vias/{via}:true. (Hoy solo se deriva 'taller'. 'mesa' y
+//    'sorteo' son manuales de momento: sus QR están pendientes. Cuando exista el
+//    QR de 'sorteo' (ruta DEDICADA /leads/sorteo/, sin escritor manual), se podrá
+//    deducir solo de la ruta sin ambigüedad — a diferencia de 'mesa', cuya ruta
+//    /leads/mesa/ comparte con el alta manual.) ──────────────────────────────────
 const VIAS = [
   { key: 'taller',   label: 'Taller' },
   { key: 'mesa',     label: 'Mesa' },
+  { key: 'sorteo',   label: 'Sorteo' },
   { key: 'web',      label: 'Web' },
   { key: 'referido', label: 'Referido' },
 ];
 const VIAS_KEYS = new Set(VIAS.map(v => v.key));
 const VIA_LABEL = Object.fromEntries(VIAS.map(v => [v.key, v.label]));
 
-// Vía intrínseca de una captura, derivada de su tallerId. Hoy solo 'taller'
-// (taller-ia / taller-juego → taller, genérico). El resto → sin vía derivada.
+// Vía intrínseca de una captura, derivada de su tallerId (= primer tramo bajo
+// /leads/). Cada vía con QR tiene su ruta DEDICADA: /leads/taller-*/, /leads/mesa/,
+// /leads/sorteo/. El alta manual del panel escribe en /leads/manual/ (ruta neutra,
+// sin vía derivada: la vía la pone Román a mano en la ficha).
 function viaDerivada(tallerId) {
-  return /^taller/i.test(String(tallerId || '')) ? 'taller' : null;
+  const t = String(tallerId || '').toLowerCase();
+  if (/^taller/.test(t)) return 'taller';
+  if (t === 'mesa')      return 'mesa';
+  if (t === 'sorteo')    return 'sorteo';
+  return null;
 }
 
 // Vías derivadas (de capturas) de la persona con este email. Se usa en la ficha
@@ -490,6 +500,44 @@ function closeEventManager() {
   document.body.style.overflow = '';
 }
 
+// ── Slug de evento — identificador ÚNICO para el QR (evento-ciudad-AAAAMMDD) ───
+// Lo genera el panel a partir de código corto (o nombre) + ciudad + fecha de
+// inicio; el QR lleva ?evento=<slug> y el taller lo escribe en el lead. Convención:
+// minúsculas, sin acentos, guiones, fecha ISO compacta. La UNICIDAD la garantiza
+// el panel (si colisiona, añade -2/-3), no el convenio escrito a mano.
+function slugify(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // quita acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function computeSlugBase(ev) {
+  const base  = slugify(ev.codigoCorto || ev.nombre || '');
+  const city  = slugify(ev.ciudad || '');
+  const fecha = (ev.fechaInicio || ev.fecha || '').replace(/-/g, '');   // YYYY-MM-DD → AAAAMMDD
+  return [base, city, fecha].filter(Boolean).join('-');
+}
+
+// Slug efectivo: el guardado, o el calculado si el evento aún no lo persistió.
+function eventoSlug(ev) {
+  return (ev && ev.slug) || computeSlugBase(ev || {});
+}
+
+// Garantiza unicidad frente al resto de eventos (salvo el que se está editando).
+function slugUnico(base, exceptKey) {
+  if (!base) return '';
+  const taken = new Set(
+    Object.entries(eventosCache)
+      .filter(([k]) => k !== exceptKey)
+      .map(([, e]) => eventoSlug(e))
+  );
+  let s = base, n = 2;
+  while (taken.has(s)) s = `${base}-${n++}`;
+  return s;
+}
+
 function renderEventoList() {
   const entries = Object.entries(eventosCache);
   if (entries.length === 0) {
@@ -501,6 +549,7 @@ function renderEventoList() {
     const fechaStr = ev.fechaInicio && ev.fechaFin && ev.fechaInicio !== ev.fechaFin
       ? `${formatFechaCorta(ev.fechaInicio)} - ${formatFechaCorta(ev.fechaFin)}`
       : ev.fechaInicio ? formatFechaCorta(ev.fechaInicio) : ev.fecha ? formatFechaCorta(ev.fecha) : '';
+    const slug = eventoSlug(ev);
     return `
       <li data-key="${key}">
         <div class="em-evento-content">
@@ -513,9 +562,34 @@ function renderEventoList() {
             <button type="button" class="em-btn em-delete-btn" aria-label="Eliminar" data-key="${key}">🗑️</button>
           </div>
         </div>
+        <div class="em-evento-slug">
+          <span class="em-slug-label">slug QR:</span>
+          <code>${esc(slug || '—')}</code>
+          ${slug ? `<button type="button" class="em-copy-btn" data-slug="${esc(slug)}">copiar</button>` : ''}
+          <button type="button" class="em-copy-btn em-regen-btn" data-key="${key}">regenerar</button>
+        </div>
       </li>
     `;
   }).join('');
+
+  emList.querySelectorAll('.em-copy-btn:not(.em-regen-btn)').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(btn.dataset.slug);
+        const prev = btn.textContent;
+        btn.textContent = 'copiado ✓';
+        setTimeout(() => { btn.textContent = prev; }, 1500);
+      } catch { /* sin portapapeles: el slug está a la vista para copiarlo a mano */ }
+    });
+  });
+
+  emList.querySelectorAll('.em-regen-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      regenerarSlug(btn.dataset.key);
+    });
+  });
 
   emList.querySelectorAll('.em-edit-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -540,6 +614,7 @@ function editEvent(key) {
   const ev = eventosCache[key];
 
   emForm['nombre'].value = ev.nombre || '';
+  emForm['codigoCorto'].value = ev.codigoCorto || '';
   emForm['fechaInicio'].value = ev.fechaInicio || ev.fecha || '';
   emForm['fechaFin'].value = ev.fechaFin || '';
   emForm['ciudad'].value = ev.ciudad || '';
@@ -559,6 +634,26 @@ function cancelEditEvent() {
   emSubmitBtn.textContent = 'Añadir evento';
   emCancelEdit.hidden = true;
   emStatus.textContent = '';
+}
+
+// Recalcula el slug de un evento a propósito (cambio intencionado ANTES de hacer
+// el QR). Avisa porque cambiarlo tras generar el QR desemparejaría sus leads.
+async function regenerarSlug(key) {
+  const ev = eventosCache[key];
+  if (!ev) return;
+  if (!confirm(
+    '¿Regenerar el identificador (slug) de este evento?\n\n' +
+    'Hazlo SOLO si aún no has creado el QR con el slug actual. Si el QR ya está ' +
+    'hecho, cambiar el slug haría que sus leads dejaran de agruparse en este evento.'
+  )) return;
+
+  const nuevo = slugUnico(computeSlugBase(ev), key);
+  ev.slug = nuevo;
+  const result = await resilientSave('update', `eventos/${key}`, { slug: nuevo });
+
+  renderEventoList();
+  emStatus.textContent = result.queued ? 'Slug regenerado (local) ↑' : 'Slug regenerado ✓';
+  emStatus.className   = result.queued ? 'panel-status' : 'panel-status ok';
 }
 
 async function deleteEvent(key) {
@@ -586,6 +681,7 @@ emForm.addEventListener('submit', async (e) => {
   const wasEditing = editingEventKey !== null;
   const eventoData = {
     nombre,
+    codigoCorto:  emForm['codigoCorto'].value.trim(),
     fechaInicio:  emForm['fechaInicio'].value,
     fechaFin:     emForm['fechaFin'].value,
     ciudad:       emForm['ciudad'].value.trim(),
@@ -599,6 +695,12 @@ emForm.addEventListener('submit', async (e) => {
   if (!key) {
     key = push(ref(db, 'eventos')).key;
   }
+
+  // El slug es un IDENTIFICADOR ESTABLE del evento (va en el QR). Se calcula al
+  // CREAR y NO se recalcula al editar: cambiarlo rompería un QR ya generado. Para
+  // cambiarlo a propósito (antes de hacer el QR) está el botón "regenerar".
+  const slugPrevio = editingEventKey ? eventosCache[editingEventKey]?.slug : null;
+  eventoData.slug = slugPrevio || slugUnico(computeSlugBase(eventoData), key);
 
   const result = await resilientSave('set', `eventos/${key}`, eventoData);
 
@@ -656,7 +758,9 @@ nlForm.addEventListener('submit', async (e) => {
   nlError.hidden = true;
 
   const ev    = activeEventKey ? eventosCache[activeEventKey] : null;
-  const newKey = push(ref(db, 'leads/mesa')).key;
+  // Alta manual → ruta NEUTRA /leads/manual/ (sin vía derivada). La vía la pone
+  // Román a mano en la ficha. /leads/mesa/ queda reservada a la página de mesa (QR).
+  const newKey = push(ref(db, 'leads/manual')).key;
   const leadData = {
     nombre,
     apellidos:      nlForm['apellidos'].value.trim(),
@@ -664,20 +768,20 @@ nlForm.addEventListener('submit', async (e) => {
     evento_origen:  ev?.nombre ?? '',
     fecha_envio:    new Date().toISOString(),
     consentimiento: true,
-    canal:          'mesa',
+    canal:          'manual',
     origen:         'panel',
   };
   const notaInicial = nlForm['nota'].value.trim();
 
   nlStatus.textContent = 'Guardando…';
-  const ops = [resilientSave('set', `leads/mesa/${newKey}`, leadData)];
+  const ops = [resilientSave('set', `leads/manual/${newKey}`, leadData)];
   if (notaInicial) {
-    ops.push(resilientSave('update', `leads/mesa/${newKey}/gestion`, { notaDelEvento: notaInicial }));
+    ops.push(resilientSave('update', `leads/manual/${newKey}/gestion`, { notaDelEvento: notaInicial }));
   }
   await Promise.all(ops);
 
   const newRow = {
-    tallerId:      'mesa',
+    tallerId:      'manual',
     pushKey:       newKey,
     nombre:        leadData.nombre    || '—',
     apellidos:     leadData.apellidos || '—',
