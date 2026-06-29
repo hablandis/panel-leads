@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0d1b2a">
   <title>Panel de Leads — Hablandis</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260628">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
 </head>
@@ -46,6 +46,7 @@
       <div class="header-controls">
         <span id="sync-indicator" class="sync-indicator" hidden></span>
         <button id="btn-eventos" class="btn-header" type="button">Eventos</button>
+        <button id="btn-cola"    class="btn-modo"   type="button">¿A quién llamo?</button>
         <button id="btn-modo"    class="btn-modo"   type="button">Modo evento</button>
       </div>
       <div class="header-user">
@@ -116,7 +117,7 @@
         <table id="leads-table" hidden>
           <thead>
             <tr>
-              <th>Taller</th>
+              <th>Vía</th>
               <th>Nombre</th>
               <th>Apellidos</th>
               <th>Email</th>
@@ -129,6 +130,9 @@
           <tbody id="leads-tbody"></tbody>
         </table>
       </div>
+
+      <!-- Cola de contacto (Capa A) -->
+      <div id="cola-view" class="cola-view" hidden></div>
     </main>
 
     <!-- ── Overlay de paneles laterales ──────────────────────────────── -->
@@ -204,10 +208,19 @@
                 <input type="date" id="f-fecha-proximo" name="fechaProximoPaso">
               </div>
             </div>
+            <div class="field-group panel-vias-group">
+              <span class="field-label">Vía de entrada</span>
+              <div id="panel-vias" class="vias-toggles"></div>
+              <span id="via-status" class="panel-status"></span>
+            </div>
             <div class="field-group panel-textarea-group">
               <label class="field-label" for="f-notas">Notas generales</label>
               <textarea id="f-notas" name="notas" rows="4"
                         placeholder="Contexto de la relación, observaciones…"></textarea>
+              <div class="analizar-row">
+                <button type="button" id="btn-analizar" class="btn-analizar">Analizar nota</button>
+                <span id="analizar-status" class="panel-status"></span>
+              </div>
             </div>
             <div class="field-group panel-textarea-group">
               <label class="field-label" for="f-nota-evento">Nota de este evento</label>
@@ -215,6 +228,19 @@
                         placeholder="Qué dijo en este encuentro, contexto del taller…"></textarea>
             </div>
           </form>
+        </section>
+        <section class="panel-section" id="panel-comportamiento-section">
+          <h4 class="panel-section-title">Comportamiento · urgencia</h4>
+          <p class="comp-rango-line">
+            Rango de urgencia: <span id="comp-rango" class="badge-rango n0">—</span>
+          </p>
+          <div id="comp-grupos" class="comp-grupos"></div>
+          <p id="comp-sello" class="comp-sello"></p>
+          <span id="comp-status" class="panel-status comp-status"></span>
+        </section>
+        <section class="panel-section" id="panel-sugerencia-section" hidden>
+          <h4 class="panel-section-title">Sugerencia de la IA</h4>
+          <div id="sug-card" class="sug-card"></div>
         </section>
         <section class="panel-section" id="panel-historial-section" hidden>
           <h4 class="panel-section-title">Historial</h4>
@@ -342,6 +368,6 @@
 
   </div><!-- /app-view -->
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=20260628"></script>
 </body>
 </html>

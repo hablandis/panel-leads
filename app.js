@@ -11,6 +11,10 @@ if ('serviceWorker' in navigator) {
 
 const ALLOWED_DOMAIN = 'hablandis.com';
 
+// Proxy de la Fase 2.5 (lee la nota con la IA y devuelve el JSON de señales).
+// URL configurable: si algún día cambia el endpoint, se toca solo aquí.
+const PROXY_ANALIZAR_URL = 'https://www.hablandis.com/api/analizar.php';
+
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getDatabase(app);
@@ -29,12 +33,33 @@ const userEmailEl = document.getElementById('user-email');
 const syncIndicator = document.getElementById('sync-indicator');
 const btnEventos    = document.getElementById('btn-eventos');
 const btnModo       = document.getElementById('btn-modo');
+const btnCola       = document.getElementById('btn-cola');
 
 // ── DOM refs — tabla ──────────────────────────────────────────────────────────
-const leadsStatus = document.getElementById('leads-status');
-const leadsTable  = document.getElementById('leads-table');
-const leadsTbody  = document.getElementById('leads-tbody');
-const leadsCount  = document.getElementById('leads-count');
+const leadsStatus  = document.getElementById('leads-status');
+const leadsTable   = document.getElementById('leads-table');
+const leadsTbody   = document.getElementById('leads-tbody');
+const leadsCount   = document.getElementById('leads-count');
+const tableWrapper = document.querySelector('.table-wrapper');
+
+// ── DOM refs — cola de contacto (Capa A) ──────────────────────────────────────
+const colaView = document.getElementById('cola-view');
+
+// ── DOM refs — vía de entrada (ficha) ─────────────────────────────────────────
+const panelViasEl = document.getElementById('panel-vias');
+const viaStatusEl = document.getElementById('via-status');
+
+// ── DOM refs — comportamiento (Capa A) ────────────────────────────────────────
+const compRangoEl  = document.getElementById('comp-rango');
+const compGruposEl = document.getElementById('comp-grupos');
+const compSelloEl  = document.getElementById('comp-sello');
+const compStatusEl = document.getElementById('comp-status');
+
+// ── DOM refs — Fase 2.5 (señales / sugerencia de la IA) ───────────────────────
+const btnAnalizar     = document.getElementById('btn-analizar');
+const analizarStatus  = document.getElementById('analizar-status');
+const sugSectionEl    = document.getElementById('panel-sugerencia-section');
+const sugCardEl       = document.getElementById('sug-card');
 
 // ── DOM refs — barra de modo evento ──────────────────────────────────────────
 const eventoBar      = document.getElementById('evento-bar');
@@ -104,6 +129,7 @@ const btnExport       = document.getElementById('btn-export');
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 let allRows        = [];
+let personasCache  = [];          // listado por persona (dedup por email), cacheado
 let contactosCache = {};
 let eventosCache   = {};
 let currentLead    = null;
@@ -117,6 +143,77 @@ let filterCual     = '';
 let filterProp     = '';
 let filterHoy      = false;
 let editingEventKey = null;
+
+// ── Capa A · comportamiento (8 toggles, agrupados por nivel, de más cerca a
+//    más lejos de la decisión). El rango de urgencia = nivel MÁS ALTO con algún
+//    toggle activo (máximo, NO suma; nunca resta). ──────────────────────────────
+const NIVELES_COMPORTAMIENTO = [
+  { nivel: 4, titulo: 'Nivel 4 · Camino a la decisión', toggles: [
+    { key: 'llevadoAOrganoDecision', label: 'Lo ha llevado a dirección o al claustro' },
+    { key: 'usaMaterialHaciaArriba', label: 'Usa el material para convencer a dirección o familias' },
+    { key: 'pidioPresupuesto',       label: 'Ha pedido o recibido un presupuesto' },
+    { key: 'reunionAgendada',        label: 'Tiene una reunión o llamada agendada' },
+  ] },
+  { nivel: 3, titulo: 'Nivel 3 · Relación activa', toggles: [
+    { key: 'hiloVivoWhatsApp',  label: 'Conversación viva por WhatsApp' },
+    { key: 'segundoToque',      label: 'Ha vuelto una segunda vez' },
+    { key: 'respondioPersonal', label: 'Respondió a un mensaje personal' },
+  ] },
+  { nivel: 2, titulo: 'Nivel 2 · Conoció la propuesta', toggles: [
+    { key: 'asistioTaller', label: 'Asistió a un taller' },
+  ] },
+  { nivel: 1, titulo: 'Nivel 1 · Primer roce', toggles: [
+    { key: 'dejoDatosEnMesa', label: 'Dejó sus datos en la mesa (a cambio de material o merch)' },
+  ] },
+];
+
+// Peso de cualificación para ordenar la cola (caliente antes que templado;
+// sin definir al final). El frío nunca entra en la cola.
+const PESO_CUALIFICACION = { caliente: 0, templado: 1, '': 2 };
+
+// ── Vía: cómo entró el contacto (lista CERRADA, no texto libre). Eje aparte del
+//    evento (dónde/cuándo). 'taller' se DERIVA del tallerId de cada captura y NO
+//    se guarda; mesa/web/referido entran a mano como overlay aditivo bajo
+//    contactos/<emailKey>/vias/{via}:true. (Hoy NO se deriva 'mesa': el QR de mesa
+//    está pendiente, así que mesa también es manual de momento.) ─────────────────
+const VIAS = [
+  { key: 'taller',   label: 'Taller' },
+  { key: 'mesa',     label: 'Mesa' },
+  { key: 'web',      label: 'Web' },
+  { key: 'referido', label: 'Referido' },
+];
+const VIAS_KEYS = new Set(VIAS.map(v => v.key));
+const VIA_LABEL = Object.fromEntries(VIAS.map(v => [v.key, v.label]));
+
+// Vía intrínseca de una captura, derivada de su tallerId. Hoy solo 'taller'
+// (taller-ia / taller-juego → taller, genérico). El resto → sin vía derivada.
+function viaDerivada(tallerId) {
+  return /^taller/i.test(String(tallerId || '')) ? 'taller' : null;
+}
+
+// Vías derivadas (de capturas) de la persona con este email. Se usa en la ficha
+// para marcar las vías "automáticas" que no se pueden quitar a mano.
+function viasDerivadasDeEmail(email) {
+  const set = new Set();
+  const lc  = String(email || '').toLowerCase();
+  for (const r of allRows) {
+    if (r.email.toLowerCase() !== lc) continue;
+    const d = viaDerivada(r.tallerId);
+    if (d) set.add(d);
+  }
+  return set;
+}
+
+// Conjunto final de vías de una persona = derivadas ∪ manuales (contacto.vias),
+// devuelto como array ordenado según VIAS. Nunca resta: la derivada siempre sale.
+function viasDePersona(derivadas, contacto) {
+  const set    = new Set(derivadas);
+  const manual = (contacto && contacto.vias) || {};
+  for (const k of Object.keys(manual)) {
+    if (manual[k] === true && VIAS_KEYS.has(k)) set.add(k);
+  }
+  return VIAS.filter(v => set.has(v.key)).map(v => v.key);
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 loginForm.addEventListener('submit', async (e) => {
@@ -222,6 +319,8 @@ async function loadAll() {
       allRows.sort((a, b) => b.fecha.localeCompare(a.fecha));
     }
 
+    await rebuildPersonas();
+
     if (allRows.length === 0) {
       leadsStatus.textContent = 'No hay leads todavía.';
       leadsStatus.hidden      = false;
@@ -240,81 +339,104 @@ async function loadAll() {
   }
 }
 
-// ── Tabla ─────────────────────────────────────────────────────────────────────
+// ── Tabla (una fila por PERSONA, dedup por email; las capturas siguen en /leads/
+//    como historial, solo cambia la vista) ──────────────────────────────────────
+function viasBadges(vias) {
+  if (!vias || vias.length === 0) return '<span class="via-none">—</span>';
+  return vias.map(k => {
+    const auto = k === 'taller';   // hoy solo 'taller' es derivada/automática
+    return `<span class="badge-via${auto ? ' auto' : ''}">${esc(VIA_LABEL[k] || k)}</span>`;
+  }).join(' ');
+}
+
 function renderTable() {
   leadsTbody.innerHTML = '';
 
-  const rows      = getFilteredRows();
+  const personas  = getFilteredPersonas();
+  const total     = personasCache.length;
   const hasFilter = filterCual || filterProp || filterHoy || (appMode === 'evento' && activeEventKey);
   leadsCount.textContent = hasFilter
-    ? `${rows.length} de ${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`
-    : `${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`;
+    ? `${personas.length} de ${total} persona${total !== 1 ? 's' : ''}`
+    : `${total} persona${total !== 1 ? 's' : ''}`;
 
-  if (rows.length === 0) {
+  if (personas.length === 0) {
     const msg = (appMode === 'evento' && activeEventKey)
-      ? 'Sin leads para este evento. Usa <strong>+ Nuevo lead</strong> para añadir el primero.'
-      : 'Ningún lead coincide con los filtros activos.';
+      ? 'Sin contactos para este evento. Usa <strong>+ Nuevo lead</strong> para añadir el primero.'
+      : 'Ningún contacto coincide con los filtros activos.';
     leadsTbody.innerHTML = `<tr><td colspan="8" class="table-empty">${msg}</td></tr>`;
     return;
   }
 
-  rows.forEach((r) => {
-    const emailKey = emailToKey(r.email);
-    const contacto = contactosCache[emailKey] ?? {};
-    const cooling  = isCooling(r, contacto);
+  personas.forEach((p) => {
+    const cooling = isCooling(p.ultimoLead, p.contacto);
 
     const tr = document.createElement('tr');
-    tr.dataset.taller = r.tallerId;
-    tr.dataset.key    = r.pushKey;
+    tr.dataset.taller = p.ultimoLead.tallerId;   // captura más reciente → abre su ficha
+    tr.dataset.key    = p.ultimoLead.pushKey;
     tr.title          = 'Abrir ficha';
     tr.innerHTML = `
-      <td><span class="badge-taller">${esc(r.tallerId)}</span></td>
-      <td>${esc(r.nombre)}</td>
-      <td>${esc(r.apellidos)}</td>
-      <td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td>
-      <td>${esc(r.evento)}</td>
-      <td>${formatFecha(r.fecha)}</td>
-      <td>${cualificacionBadge(contacto.cualificacion, cooling)}</td>
-      <td>${esc(contacto.propietario || '—')}</td>
+      <td>${viasBadges(p.vias)}</td>
+      <td>${esc(p.nombre)}</td>
+      <td>${esc(p.apellidos)}</td>
+      <td><a href="mailto:${esc(p.email)}">${esc(p.email)}</a></td>
+      <td>${esc(p.eventos.join(' · ') || '—')}</td>
+      <td>${formatFecha(p.ultimoLead.fecha)}</td>
+      <td>${cualificacionBadge(p.cualificacion, cooling)}</td>
+      <td>${esc(p.propietario || '—')}</td>
     `;
     tr.addEventListener('click', (e) => {
       if (e.target.closest('a')) return;
       if (appMode === 'evento') {
-        openQuickPanel(r);
+        openQuickPanel(p.ultimoLead);
       } else {
-        openPanel(r);
+        openPanel(p.ultimoLead);
       }
     });
     leadsTbody.appendChild(tr);
   });
 }
 
-function refreshRowCells(lead) {
-  const tr = leadsTbody.querySelector(
-    `tr[data-taller="${CSS.escape(lead.tallerId)}"][data-key="${CSS.escape(lead.pushKey)}"]`
-  );
-  if (!tr) return;
-  const contacto = contactosCache[emailToKey(lead.email)] ?? {};
-  const cooling  = isCooling(lead, contacto);
-  tr.cells[6].innerHTML   = cualificacionBadge(contacto.cualificacion, cooling);
-  tr.cells[7].textContent = contacto.propietario || '—';
+// Tras una edición que toca el contacto (cualificación, propietario, vías,
+// comportamiento…): reconstruye las personas y repinta la vista activa.
+async function refreshAfterEdit() {
+  await rebuildPersonas();
+  if (appMode !== 'cola') renderTable();   // en modo cola no pisar su contador
+  updateStats();
+  maybeRefreshCola();
 }
 
 // ── Modo evento ───────────────────────────────────────────────────────────────
 function setMode(mode) {
   appMode = mode;
-  if (mode === 'evento') {
-    eventoBar.hidden = false;
-    btnModo.classList.add('active');
-    btnModo.textContent = '← Modo repaso';
-  } else {
-    eventoBar.hidden = true;
-    btnModo.classList.remove('active');
-    btnModo.textContent = 'Modo evento';
-    activeEventKey  = null;
+  const inEvento = mode === 'evento';
+  const inCola   = mode === 'cola';
+
+  // Modo evento
+  eventoBar.hidden = !inEvento;
+  btnModo.classList.toggle('active', inEvento);
+  btnModo.textContent = inEvento ? '← Modo repaso' : 'Modo evento';
+  if (!inEvento) {
+    activeEventKey     = null;
     eventoSelect.value = '';
   }
-  renderTable();
+
+  // Cola de contacto
+  btnCola.classList.toggle('active', inCola);
+  colaView.hidden    = !inCola;
+  tableWrapper.hidden = inCola;
+
+  // Stats y filtros no aplican a la cola
+  const hideBars = inCola || allRows.length === 0;
+  statsBar.hidden   = hideBars;
+  filtersBar.hidden = hideBars;
+  if (inCola) leadsStatus.hidden = true;
+
+  if (inCola) {
+    renderCola();
+  } else {
+    renderTable();
+    updateStats();
+  }
 }
 
 function populateEventoSelect() {
@@ -333,7 +455,8 @@ function populateEventoSelect() {
   if (current && eventosCache[current]) eventoSelect.value = current;
 }
 
-btnModo.addEventListener('click', () => setMode(appMode === 'repaso' ? 'evento' : 'repaso'));
+btnModo.addEventListener('click', () => setMode(appMode === 'evento' ? 'repaso' : 'evento'));
+btnCola.addEventListener('click', () => setMode(appMode === 'cola'   ? 'repaso' : 'cola'));
 btnEventos.addEventListener('click', () => {
   closePanel();
   closeQuickPanel();
@@ -564,13 +687,14 @@ nlForm.addEventListener('submit', async (e) => {
     notaDelEvento: notaInicial,
   };
   allRows.unshift(newRow);
-  leadsCount.textContent = `${allRows.length} lead${allRows.length !== 1 ? 's' : ''}`;
+  await rebuildPersonas();
 
   if (leadsTable.hidden) {
     leadsStatus.hidden = true;
     leadsTable.hidden  = false;
   }
   renderTable();
+  updateStats();
   closeNewLead();
 
   if (appMode === 'evento') openQuickPanel(newRow);
@@ -608,6 +732,15 @@ function openPanel(lead) {
   panelForm['notas'].value            = contacto.notas            ?? '';
   panelForm['notaDelEvento'].value    = lead.notaDelEvento;
 
+  setViaStatus('');
+  renderVias(contacto);
+
+  setCompStatus('');
+  renderComportamiento(contacto);
+
+  setAnalizarStatus('');
+  renderSugerencia(contacto);   // pinta la tarjeta de la IA si hay señales guardadas
+
   const otras = allRows.filter(r =>
     r.email.toLowerCase() === lead.email.toLowerCase() && r.pushKey !== lead.pushKey
   );
@@ -641,6 +774,7 @@ function closePanel() {
   currentLead = null;
   lastFocusedEl?.focus();
   lastFocusedEl = null;
+  maybeRefreshCola();
 }
 
 function setPanelStatus(msg, type = '') {
@@ -687,10 +821,7 @@ async function savePanel() {
   const queued  = results.some(r => r.queued);
 
   contactosCache[emailKey] = { ...(contactosCache[emailKey] ?? {}), ...contactoData };
-  allRows
-    .filter(r => r.email.toLowerCase() === currentLead.email.toLowerCase())
-    .forEach(r => refreshRowCells(r));
-  updateStats();
+  await refreshAfterEdit();
 
   setPanelStatus(queued ? 'Guardado localmente ↑' : 'Guardado ✓', queued ? '' : 'ok');
   panelSave.disabled = false;
@@ -703,6 +834,7 @@ panelOverlay.addEventListener('click', () => {
   closeQuickPanel();
 });
 panelSave.addEventListener('click', savePanel);
+btnAnalizar.addEventListener('click', analizarNota);
 
 btnEnfriar.addEventListener('click', () => {
   panelForm['cualificacion'].value = 'frio';
@@ -785,10 +917,7 @@ async function saveQuickPanel() {
   const queued  = results.some(r => r.queued);
 
   contactosCache[emailKey] = { ...(contactosCache[emailKey] ?? {}), ...contactoData };
-  allRows
-    .filter(r => r.email.toLowerCase() === currentQuickLead.email.toLowerCase())
-    .forEach(r => refreshRowCells(r));
-  updateStats();
+  await refreshAfterEdit();
 
   setQpStatus(queued ? 'Guardado localmente ↑' : 'Guardado ✓', queued ? '' : 'ok');
   qpSave.disabled = false;
@@ -887,33 +1016,36 @@ async function syncPending() {
 window.addEventListener('online', syncPending);
 
 // ── Fase 4: stats, filtros, export ───────────────────────────────────────────
-function getFilteredRows() {
-  let rows = allRows;
+// Filtra el listado POR PERSONA (sobre personasCache), con los mismos predicados
+// que antes razonaban por captura. Un email = una entrada.
+function getFilteredPersonas() {
+  let personas = personasCache;
   if (appMode === 'evento' && activeEventKey) {
     const nombre = (eventosCache[activeEventKey]?.nombre ?? '').toLowerCase().trim();
-    rows = rows.filter(r => r.evento.toLowerCase().trim() === nombre);
+    personas = personas.filter(p =>
+      p.eventos.some(e => e.toLowerCase().trim() === nombre));
   }
   if (filterCual) {
     if (filterCual === 'sin-definir') {
-      rows = rows.filter(r => !(contactosCache[emailToKey(r.email)]?.cualificacion));
+      personas = personas.filter(p => !p.cualificacion);
     } else if (filterCual === 'enfriandose') {
-      rows = rows.filter(r => isCooling(r, contactosCache[emailToKey(r.email)] ?? {}));
+      personas = personas.filter(p => isCooling(p.ultimoLead, p.contacto));
     } else {
-      rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.cualificacion ?? '') === filterCual);
+      personas = personas.filter(p => p.cualificacion === filterCual);
     }
   }
   if (filterProp) {
     if (filterProp === 'sin-asignar') {
-      rows = rows.filter(r => !(contactosCache[emailToKey(r.email)]?.propietario));
+      personas = personas.filter(p => !p.propietario);
     } else {
-      rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.propietario ?? '') === filterProp);
+      personas = personas.filter(p => p.propietario === filterProp);
     }
   }
   if (filterHoy) {
     const today = new Date().toLocaleDateString('en-CA');
-    rows = rows.filter(r => (contactosCache[emailToKey(r.email)]?.fechaProximoPaso ?? '') === today);
+    personas = personas.filter(p => p.fechaProximoPaso === today);
   }
-  return rows;
+  return personas;
 }
 
 function updateStats() {
@@ -925,15 +1057,16 @@ function updateStats() {
   statsBar.hidden   = false;
   filtersBar.hidden = false;
 
+  // Stats POR PERSONA, coherente con el listado. El contador de "calientes" sigue
+  // contando solo contactos/cualificacion (ahora deduplicado por persona).
   const today = new Date().toLocaleDateString('en-CA');
   let calientes = 0, sinProp = 0, hoy = 0;
-  for (const r of allRows) {
-    const c = contactosCache[emailToKey(r.email)] ?? {};
-    if (c.cualificacion === 'caliente') calientes++;
-    if (!c.propietario) sinProp++;
-    if (c.fechaProximoPaso === today) hoy++;
+  for (const p of personasCache) {
+    if (p.cualificacion === 'caliente') calientes++;
+    if (!p.propietario) sinProp++;
+    if (p.fechaProximoPaso === today) hoy++;
   }
-  statNumTotal.textContent   = allRows.length;
+  statNumTotal.textContent   = personasCache.length;
   statNumCal.textContent     = calientes;
   statNumSinProp.textContent = sinProp;
   statNumHoy.textContent     = hoy;
@@ -991,18 +1124,20 @@ btnClearFilters.addEventListener('click', () => {
 
 btnExport.addEventListener('click', () => {
   const sep     = ',';
-  const headers = ['Taller','Nombre','Apellidos','Email','Evento','Fecha envío',
+  const headers = ['Vía','Nombre','Apellidos','Email','Evento','Fecha envío',
                    'Cualificación','Propietario','País','Institución','Nivel',
                    'Próximo paso','Fecha próximo paso','Notas'];
   const todayStr = new Date().toLocaleDateString('en-CA');
-  const rows     = getFilteredRows();
+  const personas = getFilteredPersonas();   // una fila por persona, vías agrupadas
 
   const lines = [headers.join(sep)];
-  for (const r of rows) {
-    const c = contactosCache[emailToKey(r.email)] ?? {};
+  for (const p of personas) {
+    const c = p.contacto ?? {};
     const cells = [
-      r.tallerId, r.nombre, r.apellidos, r.email, r.evento,
-      r.fecha ? new Date(r.fecha).toLocaleString('es-ES') : '',
+      p.vias.map(k => VIA_LABEL[k] || k).join(' · '),
+      p.nombre, p.apellidos, p.email,
+      p.eventos.join(' · '),
+      p.ultimoLead.fecha ? new Date(p.ultimoLead.fecha).toLocaleString('es-ES') : '',
       c.cualificacion    ?? '',
       c.propietario      ?? '',
       c.pais             ?? '',
@@ -1024,6 +1159,501 @@ btnExport.addEventListener('click', () => {
   a.click();
   URL.revokeObjectURL(url);
 });
+
+// ── Capa A · comportamiento + cola de contacto ────────────────────────────────
+// Rango de urgencia = nivel MÁS ALTO con algún toggle activo (máximo, no suma;
+// nunca resta). Alimenta la urgencia, NUNCA la cualificación.
+function rangoUrgencia(comp) {
+  comp = comp || {};
+  for (const grupo of NIVELES_COMPORTAMIENTO) {   // ya ordenados de 3 a 1
+    if (grupo.toggles.some(t => comp[t.key] === true)) return grupo.nivel;
+  }
+  return 0;
+}
+
+function rangoBadge(rango) {
+  return rango
+    ? `<span class="badge-rango n${rango}">Nivel ${rango}</span>`
+    : '<span class="badge-rango n0">—</span>';
+}
+
+function sealNombre(email) {
+  return String(email || '').split('@')[0] || '—';
+}
+
+function setCompStatus(msg, type = '') {
+  compStatusEl.textContent = msg;
+  compStatusEl.className    = 'panel-status comp-status' + (type ? ` ${type}` : '');
+}
+
+function renderComportamiento(contacto) {
+  const comp  = (contacto && contacto.comportamiento) || {};
+  const rango = rangoUrgencia(comp);
+  compRangoEl.className   = `badge-rango n${rango}`;
+  compRangoEl.textContent = rango ? `Nivel ${rango}` : '—';
+
+  compGruposEl.innerHTML = NIVELES_COMPORTAMIENTO.map(grupo => `
+    <div class="comp-grupo">
+      <p class="comp-grupo-title">${esc(grupo.titulo)}</p>
+      <div class="comp-grupo-toggles">
+        ${grupo.toggles.map(t => {
+          const on = comp[t.key] === true;
+          return `
+            <button type="button" class="comp-toggle${on ? ' active' : ''}"
+                    data-key="${esc(t.key)}" aria-pressed="${on}">
+              <span class="comp-toggle-check" aria-hidden="true">${on ? '✓' : ''}</span>
+              <span class="comp-toggle-label">${esc(t.label)}</span>
+            </button>`;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  // Sello a nivel de gestión (quién + cuándo del último toque), como el resto de
+  // la edición del panel. Sirve también de recencia para la cola.
+  const por = contacto?.actualizadoPor;
+  const fch = contacto?.fechaActualizacion;
+  compSelloEl.textContent = (por || fch)
+    ? `Último toque: ${por ? sealNombre(por) : '—'}${fch ? ' · ' + formatFechaCorta(fch) : ''}`
+    : '';
+
+  compGruposEl.querySelectorAll('.comp-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleComportamiento(btn.dataset.key));
+  });
+}
+
+// Los toggles son booleanos bajo contactos/<emailKey>/comportamiento/ (aditivo).
+// Al marcar/desmarcar se actualiza actualizadoPor + fechaActualizacion, como el
+// resto de la edición (sirve de recencia y resetea el aviso de enfriándose).
+// NUNCA toca la cualificación.
+async function toggleComportamiento(key) {
+  if (!currentLead) return;
+  const emailKey = emailToKey(currentLead.email);
+  const contacto = contactosCache[emailKey] ?? (contactosCache[emailKey] = {});
+  const comp     = contacto.comportamiento ?? (contacto.comportamiento = {});
+  const turnOn   = comp[key] !== true;
+  const por      = auth.currentUser.email;
+  const now      = new Date().toISOString();
+
+  if (turnOn) comp[key] = true; else delete comp[key];
+  contacto.actualizadoPor     = por;
+  contacto.fechaActualizacion = now;
+
+  setCompStatus('Guardando…');
+  const result = await resilientSave('update', `contactos/${emailKey}`, {
+    [`comportamiento/${key}`]: turnOn ? true : null,
+    actualizadoPor:     por,
+    fechaActualizacion: now,
+  });
+
+  renderComportamiento(contacto);
+  await refreshAfterEdit();   // la recencia/enfriándose/urgencia puede haber cambiado
+  setCompStatus(result.queued ? 'Guardado localmente ↑' : 'Guardado ✓', result.queued ? '' : 'ok');
+}
+
+// ── Vía de entrada (lista cerrada) en la ficha ────────────────────────────────
+function setViaStatus(msg, type = '') {
+  viaStatusEl.textContent = msg;
+  viaStatusEl.className    = 'panel-status' + (type ? ` ${type}` : '');
+}
+
+// Pinta los chips de vía de la persona abierta. Las DERIVADAS de sus capturas
+// (hoy 'taller') salen marcadas y bloqueadas ("automática", no se quitan a mano);
+// el resto son toggles manuales leídos de contacto.vias.
+function renderVias(contacto) {
+  const derivadas = currentLead ? viasDerivadasDeEmail(currentLead.email) : new Set();
+  const manual    = (contacto && contacto.vias) || {};
+
+  panelViasEl.innerHTML = VIAS.map(v => {
+    const auto = derivadas.has(v.key);
+    const on   = auto || manual[v.key] === true;
+    const lock = auto ? ' is-auto' : '';
+    return `
+      <button type="button" class="via-toggle${on ? ' active' : ''}${lock}"
+              data-key="${esc(v.key)}" aria-pressed="${on}"
+              ${auto ? 'disabled title="Automática (viene de una captura)"' : ''}>
+        <span class="via-toggle-check" aria-hidden="true">${on ? '✓' : ''}</span>
+        <span class="via-toggle-label">${esc(v.label)}${auto ? ' · auto' : ''}</span>
+      </button>`;
+  }).join('');
+
+  panelViasEl.querySelectorAll('.via-toggle:not(.is-auto)').forEach(btn => {
+    btn.addEventListener('click', () => toggleVia(btn.dataset.key));
+  });
+}
+
+// Las vías manuales son booleanos bajo contactos/<emailKey>/vias/ (aditivo, como
+// los toggles de comportamiento). Sella actualizadoPor + fechaActualizacion. No
+// toca campos crudos del formulario ni la cualificación.
+async function toggleVia(key) {
+  if (!currentLead || !VIAS_KEYS.has(key)) return;
+  const emailKey = emailToKey(currentLead.email);
+  const contacto = contactosCache[emailKey] ?? (contactosCache[emailKey] = {});
+  const vias     = contacto.vias ?? (contacto.vias = {});
+  const turnOn   = vias[key] !== true;
+  const por      = auth.currentUser.email;
+  const now      = new Date().toISOString();
+
+  if (turnOn) vias[key] = true; else delete vias[key];
+  contacto.actualizadoPor     = por;
+  contacto.fechaActualizacion = now;
+
+  setViaStatus('Guardando…');
+  const result = await resilientSave('update', `contactos/${emailKey}`, {
+    [`vias/${key}`]: turnOn ? true : null,
+    actualizadoPor:     por,
+    fechaActualizacion: now,
+  });
+
+  renderVias(contacto);
+  await refreshAfterEdit();
+  setViaStatus(result.queued ? 'Guardado localmente ↑' : 'Guardado ✓', result.queued ? '' : 'ok');
+}
+
+// ── Fase 2.5: señales de la IA sobre las notas ────────────────────────────────
+
+// Hash SHA-256 (hex) del texto analizado. Sirve para detectar si la nota cambió
+// desde el último análisis (sugerencia obsoleta) y para gatear la frescura de la
+// intención temporal en la cola. crypto.subtle existe en contexto seguro
+// (https + localhost/127.0.0.1), que es como se sirve esta app.
+async function hashNota(text) {
+  const data = new TextEncoder().encode(String(text || '').trim());
+  const buf  = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function setAnalizarStatus(msg, type = '') {
+  analizarStatus.textContent = msg;
+  analizarStatus.className    = 'panel-status' + (type ? ` ${type}` : '');
+}
+
+// Llama al proxy con la nota + contexto y guarda el JSON de señales TAL CUAL llega
+// bajo contactos/<emailKey>/senales/, añadiendo solo notaHash y fechaAnalisis.
+// No toca la cualificación ni ningún otro campo del contacto.
+async function analizarNota() {
+  if (!currentLead) return;
+  const emailKey = emailToKey(currentLead.email);
+  const nota     = panelForm['notas'].value.trim();
+  if (!nota) {
+    setAnalizarStatus('Escribe una nota antes de analizar.', 'err');
+    return;
+  }
+
+  setAnalizarStatus('Analizando…');
+  btnAnalizar.disabled = true;
+
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(PROXY_ANALIZAR_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        nota,
+        pais:           panelForm['pais'].value.trim(),
+        nivelEnsenanza: panelForm['nivelEnsenanza'].value,
+        institucion:    panelForm['institucion'].value.trim(),
+      }),
+    });
+    if (!res.ok) throw new Error(`proxy ${res.status}`);
+
+    const senales = await res.json();
+    // Dos campos que ponemos NOSOTROS (no el modelo). El resto se guarda intacto.
+    senales.notaHash     = await hashNota(nota);
+    senales.fechaAnalisis = new Date().toISOString();
+
+    // Guarda exactamente lo que devolvió el proxy (+ los dos campos nuestros).
+    // 'set' sobre la subruta senales/ la reemplaza entera sin tocar el resto.
+    const contacto = contactosCache[emailKey] ?? (contactosCache[emailKey] = {});
+    contacto.senales = senales;
+    const result = await resilientSave('set', `contactos/${emailKey}/senales`, senales);
+
+    renderSugerencia(contacto);
+    maybeRefreshCola();   // la intención temporal de la cola puede haber cambiado
+    setAnalizarStatus(result.queued ? 'Guardado localmente ↑' : 'Análisis listo ✓',
+                      result.queued ? '' : 'ok');
+  } catch (err) {
+    console.warn('analizarNota', err);
+    setAnalizarStatus('No se pudo analizar la nota ahora. Inténtalo de nuevo.', 'err');
+  } finally {
+    btnAnalizar.disabled = false;
+  }
+}
+
+// Pinta la tarjeta con la sugerencia guardada en contactos/<emailKey>/senales/.
+// Lee cualificacionSugerida, confianza, justificacion y accionSugerida tal como
+// llegan del proxy. Reglas:
+//   · si cualificacionManual ya es true → informa, pero NO propone cambio.
+//   · si la nota cambió desde el análisis (hash distinto) → marca obsoleta y
+//     ofrece "Reanalizar".
+//   · resto → botones "Aplicar" / "Ignorar".
+async function renderSugerencia(contacto) {
+  const sug = contacto?.senales;
+  if (!sug || !sug.cualificacionSugerida) {
+    sugSectionEl.hidden = true;
+    return;
+  }
+
+  // El hash se compara contra la nota actual del formulario (async). Guardamos a
+  // qué ficha pertenece para no pintar si el usuario cambió de lead durante el await.
+  const emailKey   = currentLead ? emailToKey(currentLead.email) : null;
+  const notaActual = panelForm['notas'].value.trim();
+  const hashActual = notaActual ? await hashNota(notaActual) : '';
+  if (!currentLead || emailToKey(currentLead.email) !== emailKey) return;
+
+  const obsoleta = !!(sug.notaHash && hashActual && sug.notaHash !== hashActual);
+  const manual   = contacto?.cualificacionManual === true;
+
+  sugSectionEl.hidden = false;
+
+  const conf = sug.confianza != null && sug.confianza !== ''
+    ? esc(String(sug.confianza)) : '—';
+
+  let avisos = '';
+  if (obsoleta) {
+    avisos += `<p class="sug-aviso desactualizada">⚠ La nota cambió desde el último análisis. La sugerencia está desactualizada.</p>`;
+  }
+  if (manual) {
+    avisos += `<p class="sug-aviso manual">La cualificación está fijada a mano; la sugerencia no la modifica.</p>`;
+  }
+
+  let botones = '';
+  if (obsoleta) {
+    botones = `<button type="button" id="sug-reanalizar" class="btn-panel-save">Reanalizar</button>`;
+  } else if (!manual) {
+    botones = `
+      <button type="button" id="sug-aplicar" class="btn-panel-save">Aplicar</button>
+      <button type="button" id="sug-ignorar" class="btn-panel-cancel">Ignorar</button>`;
+  }
+
+  sugCardEl.innerHTML = `
+    <div class="sug-head">
+      ${cualificacionBadge(sug.cualificacionSugerida, false)}
+      <span class="sug-conf">Confianza: ${conf}</span>
+    </div>
+    ${sug.justificacion ? `<p class="sug-just">${esc(sug.justificacion)}</p>` : ''}
+    ${sug.accionSugerida ? `<p class="sug-accion"><strong>Acción sugerida:</strong> ${esc(sug.accionSugerida)}</p>` : ''}
+    ${avisos}
+    ${botones ? `<div class="sug-botones">${botones}</div>` : ''}
+  `;
+
+  document.getElementById('sug-aplicar')?.addEventListener('click', aplicarSugerencia);
+  document.getElementById('sug-ignorar')?.addEventListener('click', ignorarSugerencia);
+  document.getElementById('sug-reanalizar')?.addEventListener('click', analizarNota);
+}
+
+// "Aplicar": copia cualificacionSugerida → cualificacion y fija cualificacionManual.
+// La sugerencia NUNCA pisa un manual previo (renderSugerencia ya oculta el botón
+// si manual es true). Sella actualizadoPor/fechaActualizacion como cualquier edición.
+async function aplicarSugerencia() {
+  if (!currentLead) return;
+  const emailKey = emailToKey(currentLead.email);
+  const contacto = contactosCache[emailKey] ?? (contactosCache[emailKey] = {});
+  const cual     = contacto?.senales?.cualificacionSugerida;
+  if (!cual) return;
+
+  const por = auth.currentUser.email;
+  const now = new Date().toISOString();
+
+  contacto.cualificacion       = cual;
+  contacto.cualificacionManual = true;
+  contacto.actualizadoPor      = por;
+  contacto.fechaActualizacion  = now;
+
+  setAnalizarStatus('Aplicando…');
+  const result = await resilientSave('update', `contactos/${emailKey}`, {
+    cualificacion:       cual,
+    cualificacionManual: true,
+    actualizadoPor:      por,
+    fechaActualizacion:  now,
+  });
+
+  // Refleja en el formulario abierto y en la tabla/stats/cola.
+  panelForm['cualificacion'].value = cual;
+  await refreshAfterEdit();
+  renderSugerencia(contacto);   // ahora mostrará el aviso "fijada a mano"
+
+  setAnalizarStatus(result.queued ? 'Guardado localmente ↑' : 'Aplicado ✓',
+                    result.queued ? '' : 'ok');
+}
+
+// "Ignorar": descarta la tarjeta de la vista. Deja senales/ guardado (sin aplicar);
+// reaparece si se reabre la ficha.
+function ignorarSugerencia() {
+  sugSectionEl.hidden = true;
+}
+
+// Una entrada por persona (dedup por email): la cualificación y el próximo paso
+// viven por persona en contactos/. allRows ya viene ordenado por fecha desc, así
+// que el primer lead visto de cada email es el más reciente.
+// Construye TODAS las personas (dedup por email), cada una con su conjunto de
+// vías (derivadas de sus capturas ∪ manuales) y los campos que necesitan tanto el
+// listado como la cola. NO filtra el frío aquí: el listado los muestra; la cola
+// los excluye después (la cualificación manda sobre el número).
+async function buildPersonas() {
+  const map = new Map();
+  for (const r of allRows) {
+    if (!r.email) continue;
+    const k = r.email.toLowerCase();
+    if (!map.has(k)) {
+      const contacto = contactosCache[emailToKey(r.email)] ?? {};
+      map.set(k, {
+        email:            r.email,
+        nombre:           r.nombre,
+        apellidos:        r.apellidos,
+        contacto,
+        cualificacion:    contacto.cualificacion    ?? '',
+        propietario:      contacto.propietario      ?? '',
+        fechaProximoPaso: contacto.fechaProximoPaso ?? '',
+        rango:            rangoUrgencia(contacto.comportamiento),
+        recencia:         contacto.fechaActualizacion || r.fecha || '',
+        ultimoLead:       r,
+        eventos:          [],
+        viasSet:          new Set(),
+      });
+    }
+    const p = map.get(k);
+    if (r.evento && r.evento !== '—' && !p.eventos.includes(r.evento)) p.eventos.push(r.evento);
+    const vd = viaDerivada(r.tallerId);
+    if (vd) p.viasSet.add(vd);
+  }
+
+  const personas = [...map.values()];
+  for (const p of personas) {
+    p.vias = viasDePersona(p.viasSet, p.contacto);   // derivadas ∪ manuales, ordenadas
+  }
+
+  // Precomputa la intención temporal de cada persona ya gateada por frescura
+  // (el hash es async, así que no cabe en el comparador síncrono compararCola).
+  await Promise.all(personas.map(async p => {
+    p.intencion = await intencionTemporalFresca(p.contacto);
+  }));
+
+  return personas;
+}
+
+async function rebuildPersonas() {
+  personasCache = await buildPersonas();
+}
+
+// Intención temporal declarada (Fase 2.5), leída de senales/contexto/intencionTemporal:
+// concreta > vaga > ninguna. Devuelve 2 / 1 / 0.
+// Degradación: se usa la señal SOLO si no está obsoleta — el hash de la nota
+// analizada (senales.notaHash) debe coincidir con el hash de la nota actual. Si no
+// hay señales, no hay hash, la nota cambió o el hash falla, devuelve 0 y este paso
+// del orden se salta solo (no rompe).
+async function intencionTemporalFresca(contacto) {
+  const v     = contacto?.senales?.contexto?.intencionTemporal;
+  const score = v === 'concreta' ? 2 : v === 'vaga' ? 1 : 0;
+  if (score === 0) return 0;
+
+  const storedHash = contacto?.senales?.notaHash;
+  const nota       = (contacto?.notas || '').trim();
+  if (!storedHash || !nota) return 0;   // sin hash o sin nota → no fiable → degradar
+
+  try {
+    const actual = await hashNota(nota);
+    return actual === storedHash ? score : 0;   // obsoleta → degradar
+  } catch {
+    return 0;
+  }
+}
+
+// Orden en cascada: cualificación → rango de urgencia → intención temporal (si
+// existe y está fresca, precomputada en buildPersonas) → recencia.
+function compararCola(a, b) {
+  const ca = PESO_CUALIFICACION[a.cualificacion] ?? 2;
+  const cb = PESO_CUALIFICACION[b.cualificacion] ?? 2;
+  if (ca !== cb) return ca - cb;
+  if (a.rango !== b.rango) return b.rango - a.rango;
+  const ia = a.intencion ?? 0;
+  const ib = b.intencion ?? 0;
+  if (ia !== ib) return ib - ia;
+  return (b.recencia || '').localeCompare(a.recencia || '');
+}
+
+function colaItemHtml(p) {
+  const nombre   = [p.nombre, p.apellidos].filter(x => x && x !== '—').join(' ') || p.email;
+  const fechaStr = p.fechaProximoPaso ? formatFechaCorta(p.fechaProximoPaso) : 'sin fecha';
+  return `
+    <li class="cola-item" data-taller="${esc(p.ultimoLead.tallerId)}"
+        data-key="${esc(p.ultimoLead.pushKey)}" title="Abrir ficha">
+      <div class="cola-item-main">
+        <span class="cola-nombre">${esc(nombre)}</span>
+        <span class="cola-eventos">${esc(p.eventos.join(' · ') || '—')}</span>
+      </div>
+      <div class="cola-item-meta">
+        ${cualificacionBadge(p.cualificacion, false)}
+        ${rangoBadge(p.rango)}
+        <span class="cola-fecha">${esc(fechaStr)}</span>
+      </div>
+    </li>`;
+}
+
+// Domingo (fin) de la semana natural en curso, en formato 'YYYY-MM-DD'.
+// "Esta semana" = próximo paso vencido o con fecha hasta este domingo inclusive.
+function finSemanaISO() {
+  const d   = new Date();
+  const dow = (d.getDay() + 6) % 7;        // 0 = lunes … 6 = domingo
+  d.setDate(d.getDate() + (6 - dow));      // avanza hasta el domingo
+  return d.toLocaleDateString('en-CA');
+}
+
+async function renderCola() {
+  // El frío NUNCA entra en la cola (la cualificación manda sobre el número).
+  const personas    = (await buildPersonas()).filter(p => p.cualificacion !== 'frio');
+  const finDeSemana = finSemanaISO();
+
+  const buckets = { semana: [], triage: [], madurando: [] };
+  for (const p of personas) {
+    const f = p.fechaProximoPaso;
+    if (!f)                    buckets.triage.push(p);     // sin fecha → triaje
+    else if (f <= finDeSemana) buckets.semana.push(p);     // vencida o dentro de esta semana
+    else                       buckets.madurando.push(p);  // futuro, tras esta semana
+  }
+  // El comparador en cascada ordena los dos cubos accionables; "Madurando" se
+  // ordena por su fecha (lo que antes vuelve, antes aparece).
+  buckets.semana.sort(compararCola);
+  buckets.triage.sort(compararCola);
+  buckets.madurando.sort((a, b) =>
+    (a.fechaProximoPaso || '').localeCompare(b.fechaProximoPaso || ''));
+
+  const defs = [
+    { key: 'semana',    titulo: 'Esta semana',        sub: 'Próximo paso vencido o dentro de esta semana' },
+    { key: 'triage',    titulo: 'Sin fecha · triaje', sub: 'Sin próximo paso — ponle fecha' },
+    { key: 'madurando', titulo: 'Madurando',          sub: 'Próximo paso más adelante' },
+  ];
+
+  colaView.innerHTML = defs.map(d => `
+    <section class="cola-bucket cola-${d.key}">
+      <header class="cola-bucket-head">
+        <h3 class="cola-bucket-title">${d.titulo} <span class="cola-bucket-count">${buckets[d.key].length}</span></h3>
+        <p class="cola-bucket-sub">${d.sub}</p>
+      </header>
+      <ul class="cola-list">
+        ${buckets[d.key].length === 0
+          ? '<li class="cola-empty">Nadie por ahora.</li>'
+          : buckets[d.key].map(colaItemHtml).join('')}
+      </ul>
+    </section>
+  `).join('');
+
+  colaView.querySelectorAll('.cola-item').forEach(li => {
+    li.addEventListener('click', () => {
+      const lead = allRows.find(r =>
+        r.tallerId === li.dataset.taller && r.pushKey === li.dataset.key);
+      if (lead) openPanel(lead);
+    });
+  });
+
+  leadsCount.textContent = `${personas.length} en cola`;
+}
+
+function maybeRefreshCola() {
+  if (appMode === 'cola') renderCola();
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function emailToKey(email) {
