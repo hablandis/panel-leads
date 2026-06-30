@@ -314,15 +314,24 @@ async function loadAll() {
         const tallerId = tallerSnap.key;
         tallerSnap.forEach((leadSnap) => {
           const d = leadSnap.val();
+          // Evento: el taller escribe el slug en `eventoSlug`. Se resuelve a la
+          // etiqueta del evento (nombre · ciudad). Fallback a `evento_origen`
+          // (texto legado) si no hay slug o no casa con ningún evento.
+          const eventoSlugRaw = d.eventoSlug   ?? '';
+          const eventoRaw     = d.evento_origen ?? '';
+          const evMatch       = eventoPorSlug(eventoSlugRaw);
           allRows.push({
             tallerId,
             pushKey:       leadSnap.key,
             nombre:        d.nombre        ?? '—',
             apellidos:     d.apellidos     ?? '—',
             email:         d.email         ?? '',
-            evento:        d.evento_origen ?? '—',
+            evento:        evMatch ? etiquetaEvento(evMatch) : (eventoRaw || '—'),
+            eventoSlug:    eventoSlugRaw,
+            eventoRaw:     eventoRaw,
             fecha:         d.fecha_envio   ?? '',
             notaDelEvento: d.gestion?.notaDelEvento ?? '',
+            mensajeLead:   d.contexto ?? d.mensaje ?? '',   // texto libre que dejó el lead al capturarse (solo lectura)
           });
         });
       });
@@ -523,6 +532,21 @@ function computeSlugBase(ev) {
 // Slug efectivo: el guardado, o el calculado si el evento aún no lo persistió.
 function eventoSlug(ev) {
   return (ev && ev.slug) || computeSlugBase(ev || {});
+}
+
+// Resuelve un slug (el que escribe el taller en el lead) al evento del panel, o
+// null si no lo encuentra. Sirve para mostrar la etiqueta y agrupar por evento.
+function eventoPorSlug(slug) {
+  if (!slug) return null;
+  for (const ev of Object.values(eventosCache)) {
+    if (eventoSlug(ev) === slug) return ev;
+  }
+  return null;
+}
+
+// Etiqueta legible de un evento (lo que se muestra en el listado/ficha/cola).
+function etiquetaEvento(ev) {
+  return ev.nombre + (ev.ciudad ? ` · ${ev.ciudad}` : '');
 }
 
 // Garantiza unicidad frente al resto de eventos (salvo el que se está editando).
@@ -766,6 +790,7 @@ nlForm.addEventListener('submit', async (e) => {
     apellidos:      nlForm['apellidos'].value.trim(),
     email,
     evento_origen:  ev?.nombre ?? '',
+    eventoSlug:     ev ? eventoSlug(ev) : '',   // mismo slug del evento activo → agrupa como los del QR
     fecha_envio:    new Date().toISOString(),
     consentimiento: true,
     canal:          'manual',
@@ -786,9 +811,12 @@ nlForm.addEventListener('submit', async (e) => {
     nombre:        leadData.nombre    || '—',
     apellidos:     leadData.apellidos || '—',
     email:         leadData.email     || '',
-    evento:        leadData.evento_origen || '—',
+    evento:        ev ? etiquetaEvento(ev) : (leadData.evento_origen || '—'),
+    eventoSlug:    leadData.eventoSlug,
+    eventoRaw:     leadData.evento_origen,
     fecha:         leadData.fecha_envio,
     notaDelEvento: notaInicial,
+    mensajeLead:   '',
   };
   allRows.unshift(newRow);
   await rebuildPersonas();
@@ -822,6 +850,7 @@ function openPanel(lead) {
     <dt>Taller</dt>  <dd>${esc(lead.tallerId)}</dd>
     <dt>Evento</dt>  <dd>${esc(lead.evento)}</dd>
     <dt>Enviado</dt> <dd>${formatFecha(lead.fecha)}</dd>
+    ${lead.mensajeLead ? `<dt>Mensaje del lead</dt> <dd class="dd-mensaje">${esc(lead.mensajeLead)}</dd>` : ''}
   `;
 
   panelCooling.hidden = !cooling;
@@ -1125,9 +1154,12 @@ window.addEventListener('online', syncPending);
 function getFilteredPersonas() {
   let personas = personasCache;
   if (appMode === 'evento' && activeEventKey) {
-    const nombre = (eventosCache[activeEventKey]?.nombre ?? '').toLowerCase().trim();
+    const ev     = eventosCache[activeEventKey] ?? {};
+    const slug   = eventoSlug(ev);
+    const nombre = (ev.nombre ?? '').toLowerCase().trim();
     personas = personas.filter(p =>
-      p.eventos.some(e => e.toLowerCase().trim() === nombre));
+      (slug && p.eventoSlugs.has(slug)) ||                               // casa por slug (nuevo)
+      [...p.eventosRaw].some(e => e.toLowerCase().trim() === nombre));   // o por nombre (legado)
   }
   if (filterCual) {
     if (filterCual === 'sin-definir') {
@@ -1615,11 +1647,15 @@ async function buildPersonas() {
         recencia:         contacto.fechaActualizacion || r.fecha || '',
         ultimoLead:       r,
         eventos:          [],
+        eventoSlugs:      new Set(),   // slugs de sus capturas (para agrupar por evento)
+        eventosRaw:       new Set(),   // evento_origen legado (fallback de agrupación)
         viasSet:          new Set(),
       });
     }
     const p = map.get(k);
     if (r.evento && r.evento !== '—' && !p.eventos.includes(r.evento)) p.eventos.push(r.evento);
+    if (r.eventoSlug) p.eventoSlugs.add(r.eventoSlug);
+    if (r.eventoRaw)  p.eventosRaw.add(r.eventoRaw);
     const vd = viaDerivada(r.tallerId);
     if (vd) p.viasSet.add(vd);
   }

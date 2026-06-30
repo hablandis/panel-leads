@@ -475,6 +475,7 @@ td a:hover { text-decoration: underline; color: var(--navy-light); }
 .panel-dl dt { color: var(--gray-400); white-space: nowrap; }
 .panel-dl dd { color: var(--navy); word-break: break-word; }
 .panel-dl a  { color: var(--navy); }
+.panel-dl .dd-mensaje { white-space: pre-wrap; font-style: italic; color: var(--gray-700); }
 
 /* Hint de enfriándose */
 .panel-cooling {
